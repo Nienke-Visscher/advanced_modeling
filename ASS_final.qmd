@@ -1,0 +1,691 @@
+---
+title: "Final assignment"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+Tasks and evaluation:
+
+1.  Data cleaning and descriptive tools: 1 point
+
+2.  Classification (emphasis on interpretation): 1 points
+
+3.  Classification (emphasis on prediction): 4 points
+
+4.  Advanced Regression (emphasis on interpretation): 1 points
+
+5.  Advanced Regression (emphasis on prediction): 3 points
+
+```{r}
+
+library(tidyverse)
+library(GGally) # ggplot2-based visualization of correlations
+library(factoextra) # ggplot2-based visualization of pca
+library(countrycode)
+library(rworldmap)
+library(mice)
+library(plotly)
+library(DataExplorer)
+library(haven)
+library(memisc)
+library(readxl)
+library(openxlsx)
+library(grapesAgri1)
+library(patchwork)
+library(cowplot)
+library(reshape2)
+library(summarytools)
+library(caret)
+library(MLmetrics)
+library(pdp)
+library(ggcorrplot)
+library(randomForest)
+```
+
+```{r}
+data <-read.csv("C:/Users/rnvis/Desktop/Advanced_modeling/ESS7-final-ass/ESS7.csv")
+```
+
+## Data cleaning
+
+```{r}
+data_c <- data |>
+  dplyr::select(-ctzshipc, -cntbrthc, -fbrncntb, -admaimg, 
+                -edulvlb, -edulvlfb, -edulvlmb,  
+                -imptrad, -name, -essround, -edition,
+                -proddate, -cntry, -dweight, -pspwght,
+                -pweight, -anweight, -crpdwk, -imsmetn) |> 
+  mutate(across(tvtot | ppltrst | pplfair | pplhlp | 
+                trstlgl | trstep | trstprl | lrscale | 
+                stfeco | stfgov | stfdem | euftf | 
+                imbgeco | imueclt | imwbcnt | rlgdgr | 
+                imtcjob | imbleco | imwbcrm | dfegcon |
+                 maritalb | hinctnta,
+      ~ ifelse(. >= 77, NA, .))) |> 
+  mutate(across(tvpol | prtcldes | mmbrn | dfeghbg,
+      ~ ifelse(. >= 66, NA, .))) |> 
+   mutate(across(polintr | imdfetn | impcntr | 
+                 aesfdrk | rlgblg | ctzcntr | brncntr | 
+                 blgetmg | facntr | mocntr | acetalv | 
+                 gvrfgap | dfegcf | gndr | dvrcdeva | 
+                 hincfel | ipeqopt | impsafe | ipfrule | 
+                 ipudrst | impfree | ipstrgv,
+      ~ ifelse(. >= 7, NA, .))) |> 
+  mutate(uemp5yr = ifelse(uemp5yr >= 6, NA, uemp5yr)) |> 
+  mutate(eisced = ifelse(eisced >= 55, NA, eisced)) |> 
+  mutate(wkhtot = ifelse(wkhtot >= 90, NA, wkhtot)) |> 
+  mutate(yrbrn = ifelse(yrbrn >=7777, NA, yrbrn))
+  
+  
+
+sapply(data_c, function(x) sum(is.na(x))*100/nrow(data_c))
+
+
+data_c <- data_c |> 
+ dplyr:: select(-uemp5yr, -prtcldes) |> 
+ mutate_at(vars(polintr, impcntr, 
+                aesfdrk, rlgblg, dscrrce, dscrntn, 
+                dscrrlg, dscrlng,ctzcntr, brncntr, 
+                blgetmg, facntr, mocntr, acetalv, 
+                gvrfgap, dfegcf, dfegcon, gndr, 
+                dvrcdeva, maritalb, eisced, 
+                hinctnta, hincfel), as.factor) |> 
+  mutate(idno = as.character(idno))
+
+
+idno <- data_c$idno
+
+data_c<- data_c |> 
+  dplyr::select(-idno)
+
+#Imputing NA
+data_c_imp <- complete(mice(data_c, m=2, method='rf')) #rf = random forest
+
+#Check for percentage NA after imputations 
+sapply(data_c_imp, function(x) sum(is.na(x))*100/nrow(data_c_imp))
+
+
+data_f <- data_c_imp |> 
+  mutate(allow_migrants = case_when(imdfetn == 1 ~"Allow_many",
+                                    imdfetn == 2 ~"Allow_some",
+                                    imdfetn == 3 ~"Allow_few",
+                                    imdfetn == 4 ~"Allow_none")) |> 
+  dplyr::select(-imdfetn)
+
+
+prop.table(table(data_f$allow_migrants))
+```
+
+## Classification analysis
+
+### Feature selection
+
+```{r}
+
+data_cor <- data_f |> 
+  dplyr::select(where(is.numeric))
+
+#Chekcing correlations 
+cor_matrix <- data.frame(cor(data_cor))
+
+
+ggcorrplot(cor_matrix)
+
+data_f$allow_migrants <- as.factor(data_f$allow_migrants)
+
+rf_model <- randomForest(allow_migrants ~ ., data = data_f, importance = TRUE)
+
+# Plot variable importance
+varImpPlot(rf_model, main="Variable Importance Plot")
+
+# Select top features
+imp_features <- importance(rf_model, type = 1)
+imp_features <- as.data.frame(imp_features)
+
+top_features <- imp_features %>%
+  arrange(desc(MeanDecreaseAccuracy)) %>%
+  slice(1:20)
+
+# Convert row names to a new column
+top_features$var <- rownames(top_features)
+
+top_f <- as.list(top_features$var)
+top_f <- unlist(top_f)
+top_f
+```
+
+```{r}
+
+data_f_red <- data_f |> 
+  dplyr::select(all_of(top_f), allow_migrants)
+
+data_cor <- data_f_red |> 
+  dplyr::select(where(is.numeric))
+
+#Chekcing correlations 
+cor_matrix <- data.frame(cor(data_cor))
+
+
+ggcorrplot(cor_matrix)
+```
+
+### Splitting the data set
+
+```{r}
+
+in_train <- createDataPartition(data_f_red$allow_migrants, p = 0.8, list = FALSE)  
+training <- data_f_red[ in_train,]
+testing <- data_f_red[-in_train,]
+nrow(training)
+nrow(testing)
+```
+
+### The control function
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 10, #change back to 10!!!!
+                     classProbs = T,
+                     verboseIter = T)
+
+levels(training$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none"  )
+levels(testing$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none")
+
+
+```
+
+### Training using different algorithms
+
+#### Random Forest
+
+```{r}
+# Define a grid for the hyper-parameters
+param_grid = expand.grid(gamma = seq(0, 1, 0.1), lambda = seq(0.1, 0.9, 0.1)) 
+
+mtry <- sqrt(ncol(training))
+tunegrid <- expand.grid(.mtry=mtry)
+
+RfFit <- train(allow_migrants ~ ., 
+                method ="rf", 
+                data = training,
+                preProcess = c("center", "scale"),
+                tuneGrid=tunegrid, 
+                metric="Accuracy", 
+                trControl = ctrl)
+RfFit
+
+```
+
+#### k-Nearest Neighbour
+
+```{r}
+knnFit <- train(allow_migrants ~ ., 
+                method ="knn", #name of the model
+                data = training,
+                preProcess = c("center", "scale"),
+                metric="Accuracy", 
+                trControl = ctrl)
+
+knnFit
+```
+
+#### Recursive Partitioning and Regression Trees
+
+```{r}
+
+rpartFit <- train(allow_migrants ~ ., 
+                method ="rpart", #name of the model
+                data = training,
+                preProcess = c("center", "scale"),
+                metric="Accuracy", 
+                trControl = ctrl)
+rpartFit
+```
+
+### Performance analysis
+
+```{r}
+resample_results <- resamples(list(RF = RfFit, KNN = knnFit, RPART = rpartFit ))
+summary(resample_results,metric = c("Kappa","Accuracy"))
+```
+
+```{r}
+densityplot(resample_results , metric = "Accuracy" ,auto.key = list(columns = 3))
+bwplot(resample_results , metric = c("Kappa","Accuracy"))
+
+```
+
+### Prediction and interpretation based on the best model: Random Forest
+
+#### Prediction
+
+```{r}
+
+predictions <- predict(RfFit, testing, preProcess = c("center", "scale"),type = "prob")
+
+predicted_classes <- apply(predictions, 1, which.max)
+class_labels <- levels(testing$allow_migrants)
+predictions <- class_labels[predicted_classes]
+
+# Convert prediction to factor with levels matching testing$allow_migrants
+predictions <- factor(predictions, levels = levels(testing$allow_migrants))
+
+
+# Create confusion matrix
+confusionMatrix(predictions, testing$allow_migrants)$table
+confusionMatrix(predictions, testing$allow_migrant)$overall[1:2]
+
+```
+
+### Interpretation
+
+#### Variable importance
+
+```{r}
+
+rf_imp <- varImp(RfFit, scale = F) 
+plot(rf_imp, scales = list(y = list(cex = .95)))
+
+
+```
+
+#### Partial dependence plots
+
+```{r}
+
+partial(RfFit, pred.var = "imwbcnt", plot = TRUE, rug = TRUE)
+partial(RfFit, pred.var = "imbgeco", plot = TRUE, rug = TRUE)
+```
+
+### Ensemble
+
+```{r}
+
+```
+
+## Regression
+
+### Descriptives
+
+```{r}
+
+data_f <- data_f |> 
+  rename(imueclt = cntry_cul_und)
+```
+
+### Feature selection
+
+```{r}
+
+#Selecting numeric variables
+
+cor_data <- data_f |> 
+  dplyr::select(where(is.numeric),-cntry_cul_und) 
+ 
+cor_data<- complete(mice(cor_data, m=2, method='rf'))
+
+correlation_matrix <- cor(cor_data)
+
+# Step 2: Use findCorrelation() to identify highly correlated features
+high_corr <- findCorrelation(correlation_matrix, cutoff = 0.6, exact = FALSE)
+
+# Step 3: Remove highly correlated features from the dataset
+selected_var <- cor_data[, -high_corr]
+
+selected_var <- names(selected_var)
+selected_var
+
+cor_data<- cor_data |> 
+  dplyr::select(selected_var)
+
+cor_data$cntry_cul_und <- data_f$cntry_cul_und
+
+corr<- cor(cor_data$cntry_cul_und, cor_data[,-29])
+corr<-round(corr,4)
+
+barplot(corr, names.arg = names(cor_data[,-29]), col = "steelblue", las = 2 , adj = 0.45, main = "Correlation with cntry_cul_und ")
+
+cor_df <- as.data.frame(corr)
+
+# Extract variable names with correlations higher than 0.2
+selected_vars <- names(cor_df)[cor_df > 0.2]
+
+data_f_red<- data_f |> 
+  dplyr::select(selected_vars, cntry_cul_und, where(is.factor))
+```
+
+```{r}
+in_train <- createDataPartition(data_f_red$cntry_cul_und, p = 0.8, list = FALSE)  
+training <- data_f_red[ in_train,]
+testing <- data_f_red[-in_train,]
+nrow(training)
+nrow(testing)
+
+# Define your control parameters
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define your lasso tuning grid
+lasso_grid <- expand.grid(alpha = 1, lambda = seq(0.001, 1, length = 100))
+
+# Train the Lasso regression model
+lasso <- train(cntry_cul_und ~ .,
+               data = training,
+               method = 'glmnet',
+               preProc = c('scale', 'center'),
+               tuneGrid = lasso_grid,
+               trControl = ctrl)
+
+coef(lasso$finalModel, lasso$finalModel$lambdaOpt)
+lasso_coef <- coef(lasso$finalModel, s = lasso$finalModel$lambdaOpt)
+
+non_zero_vars <- rownames(lasso_coef)[lasso_coef[, 1] != 0]
+
+non_zero_vars <-str_replace_all(non_zero_vars, "\\d", "")
+non_zero_vars <-str_replace_all(non_zero_vars, "Allow.*", "")
+non_zero_vars <- non_zero_vars[- 1]
+
+non_zero_vars <- unique(non_zero_vars)
+
+non_zero_vars
+
+data_f_red <- data_f_red |> 
+  dplyr::select(non_zero_vars, cntry_cul_und)
+
+```
+
+### Splitting the data set
+
+```{r}
+in_train <- createDataPartition(data_f_red$cntry_cul_und, p = 0.8, list = FALSE)  
+training <- data_f_red[ in_train,]
+testing <- data_f_red[-in_train,]
+nrow(training)
+nrow(testing)
+```
+
+### The control function
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     verboseIter = T)
+
+```
+
+### Training using different algorithms
+
+```{r}
+test_results <- data.frame(cntry_cul_und = testing$cntry_cul_und)
+```
+
+#### Linear Model
+
+```{r}
+lm_fit <- train(cntry_cul_und~., data = training, 
+                 method = "lm",
+                 preProc=c('scale', 'center'),
+                 trControl = ctrl)
+lm_fit
+```
+
+```{r}
+test_results$lm <- predict(lm_fit, testing)
+
+lm_post <-postResample(pred = test_results$lm,  obs = test_results$cntry_cul_und)
+```
+
+#### Linear Model: Poisson
+
+Non-negative discrete values
+
+```{r}
+lm_poisson_fit <- train(cntry_cul_und~., data = training, 
+                 method = "lm", 
+                 family = poison,
+                 preProc=c('scale', 'center'),
+                 trControl = ctrl)
+lm_poisson_fit
+
+
+```
+
+```{r}
+test_results$lm_poisson <- predict(lm_poisson_fit, testing)
+
+lm_poisson_post <-postResample(pred = test_results$lm_poisson,  obs = test_results$cntry_cul_und)
+```
+
+#### Linear Model: Quasi-Poisson
+
+When the variance is significantly larger than the mean and overdispersion occurs. The quasi-poisson model is able to combat this as it assumes that variance can be modeled as a linear function of the mean and computes an overdispersion factor ϕ relating to the mean and variance: Var(Y)=ϕ∗mean(Y)
+
+```{r}
+
+lm_quasi_poisson_fit <- train(cntry_cul_und~., data = training, 
+                 method = "lm", 
+                 family = quasipoisson,
+                 preProc=c('scale', 'center'),
+                 trControl = ctrl)
+
+lm_quasi_poisson_fit
+
+```
+
+```{r}
+test_results$quasi_poisson <- predict(lm_quasi_poisson_fit, testing)
+
+lm_quasi_poisson_post <-postResample(pred = test_results$quasi_poisson,  obs = test_results$cntry_cul_und)
+
+ 
+```
+
+#### Foreward regression
+
+```{r}
+for_fit <- train(cntry_cul_und~., data = training, 
+                  method = "leapForward", 
+                  preProc=c('scale', 'center'),
+                  tuneGrid = expand.grid(nvmax = 4:10),
+                  trControl = ctrl)
+
+for_fit
+plot(for_fit)
+
+coef(for_fit$finalModel, for_fit$bestTune$nvmax)
+```
+
+```{r}
+test_results$foreward <- predict(for_fit, testing)
+
+for_post <-postResample(pred = test_results$foreward,  obs = test_results$cntry_cul_und)
+
+
+```
+
+#### Backward regression
+
+```{r}
+back_fit <- train(cntry_cul_und~., data = training, 
+                   method = "leapBackward", 
+                   preProc=c('scale', 'center'),
+                   tuneGrid = expand.grid(nvmax = 4:10),
+                   trControl = ctrl)
+back_fit
+plot(back_fit)
+coef(back_fit$finalModel, back_fit$bestTune$nvmax)
+```
+
+```{r}
+test_results$backward <- predict(back_fit, testing)
+
+back_post<-postResample(pred = test_results$backward,  obs = test_results$cntry_cul_und)
+
+ 
+```
+
+#### Stepwsie regression
+
+```{r}
+step_fit <- train(cntry_cul_und~., data = training, 
+                   method = "leapSeq", 
+                   preProc=c('scale', 'center'),
+                   tuneGrid = expand.grid(nvmax = 4:10),
+                   trControl = ctrl)
+plot(step_fit)
+
+# which variables are selected?
+coef(step_fit$finalModel, step_fit$bestTune$nvmax)
+
+
+```
+
+```{r}
+test_results$stepwise <- predict(step_fit, testing)
+
+step_post <- postResample(pred = test_results$stepwise,  obs = test_results$cntry_cul_und)
+```
+
+#### Elastic Net Regression
+
+```{r}
+elastic_grid = expand.grid(alpha = seq(0, .2, 0.01), lambda = seq(0, .1, 0.01))
+
+glmnet_fit <- train(cntry_cul_und~., data = training,
+                     method='glmnet',
+                     preProc=c('scale','center'),
+                     tuneGrid = elastic_grid,
+                     trControl=ctrl)
+
+plot(glmnet_fit)
+glmnet_fit$bestTune
+```
+
+```{r}
+test_results$elastic_net <- predict(glmnet_fit, testing)
+
+glmnet_post <-postResample(pred = test_results$elastic_net,  obs = test_results$cntry_cul_und)
+
+
+```
+
+#### k Nearest Neighbour
+
+```{r}
+knn_fit <- train(cntry_cul_und~., 
+                  data = training,
+                  method = "kknn",   
+                  preProc=c('scale','center'),
+                  tuneGrid = data.frame(kmax=c(11,13,15,19,21),
+                                        distance=2,
+                                        kernel='optimal'),
+                  trControl = ctrl)
+plot(knn_fit)
+```
+
+```{r}
+test_results$knn <- predict(knn_fit, testing)
+
+knn_post <-postResample(pred = test_results$knn,  obs = test_results$cntry_cul_und)
+
+```
+
+#### Random forest
+
+```{r}
+rf_fit <- train(cntry_cul_und~., 
+                 data = training,
+                 method = "rf",
+                 preProc=c('scale','center'),
+                 trControl = ctrl,
+                 ntree = 100,
+                 tuneGrid = data.frame(mtry=c(1,3,5)), #sqrt(26) = 5
+                 importance = TRUE)
+
+plot(rf_fit)
+
+```
+
+```{r}
+test_results$random_forest <- predict(rf_fit, testing)
+
+rf_post <-postResample(pred = test_results$random_forest,  obs = test_results$cntry_cul_und)
+```
+
+#### Neural Network
+
+```{r}
+nn_fit <- train(cntry_cul_und~., 
+                 data = training,
+                 method = "neuralnet",
+                 preProc=c('scale','center'),
+                 trControl = ctrl,
+                 tuneGrid = expand.grid(layer1 = c(4, 2), 
+                                        layer2 = c(1, 0),
+                                        layer3 = c(0)))
+
+plot(nn_fit)
+```
+
+```{r}
+test_results$neural_network <- predict(nn_fit, testing)
+
+nn_post <-postResample(pred = test_results$neural_network,  obs = test_results$cntry_cul_und)
+```
+
+### Indicating the best model
+
+```{r}
+
+#Include nn
+rbind(lm_post, lm_poisson_post, lm_quasi_poisson_post, for_post, back_post, step_post, glmnet_post, knn_post, rf_post)
+
+results <- resamples(list(linear = lm_fit, poisson = lm_poisson_fit, quasipoisson = lm_quasi_poisson_fit, foreward = for_fit, backward = back_fit, elastic_net = glmnet_fit, kNN = knn_fit, randomforest = rf_fit )) #neuralnetwork = nn_fit
+
+summary(results)
+
+dotplot(results)
+
+
+
+```
+
+### Prediction with the best model:
+
+```{r}
+qplot(test_results$lm, test_results$cntry_cul_und) + 
+  labs(title="Linear Regression Observed VS Predicted", x="Predicted", y="Observed") +
+  lims(x = c(0, 15), y = c(0, 15)) +
+  geom_abline(intercept = 0, slope = 1, colour = "blue") +
+  theme_bw()
+```
+
+### Ensemble
+
+Mae so close to one another, does not amke sense
+
+```{r}
+#summarize the MAE for all the tools
+apply(test_results[-1], 2, function(x) mean(abs(x - test_results$cntry_cul_und)))
+
+
+test_results$comb = (test_results$lm + test_results$lm_poisson + test_results$quasi_poisson + test_results$elastic_net)/4
+
+postResample(pred = test_results$comb,  obs = test_results$cntry_cul_und)
+```
+
+### Final predictions
+
+```{r}
+yhat = exp(test_results$comb)
+
+head(yhat) # show the prediction for 6 home prices
+
+hist(yhat, col="lightblue")
+
+```
+
+git reset --hard ce01fa1708409a7626f31728abd75182d64d72b2
+
+526e1dcd94ec64addcd3614692fdcf0c90604704 ce01fa1708409a7626f31728abd75182d64d72b2
