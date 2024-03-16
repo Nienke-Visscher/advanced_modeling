@@ -18,6 +18,10 @@ Tasks and evaluation:
 
 5.  Advanced Regression (emphasis on prediction): 3 points
 
+## Introduction
+
+### Libraries
+
 ```{r}
 
 library(tidyverse)
@@ -112,6 +116,7 @@ data_f <- data_c_imp |>
                                     imdfetn == 2 ~"Allow_some",
                                     imdfetn == 3 ~"Allow_few",
                                     imdfetn == 4 ~"Allow_none")) |> 
+  mutate(allow_migrants = as.factor(allow_migrants)) |> 
   dplyr::select(-imdfetn)
 
 
@@ -122,20 +127,103 @@ prop.table(table(data_f$allow_migrants))
 
 ### Feature selection
 
+#### Factor variables
+
 ```{r}
 
-data_cor <- data_f |> 
-  dplyr::select(where(is.numeric))
+#Selecting factor variables
+data_factor <- data_f |> 
+  dplyr::select(where(is.factor),) |> 
+  drop_na()
 
-#Chekcing correlations 
-cor_matrix <- data.frame(cor(data_cor))
+var <- names(data_factor)
+
+var_n <- c("polintr")
 
 
-ggcorrplot(cor_matrix)
+chi_function <-function(var_n){
+  
+ 
+  chi_result <- NULL
+ 
+  
+  tryCatch({
+    chi_result <- tidy(chisq.test(data_factor$allow_migrants, data_factor[,i]))
+  }, error = function(e) {NA
+    
+  })
+  
+}
 
-data_f$allow_migrants <- as.factor(data_f$allow_migrants)
+v <- chi_function(var_n)
+v 
 
-rf_model <- randomForest(allow_migrants ~ ., data = data_f, importance = TRUE)
+
+result <-list()
+
+for (i in seq_along (var)){
+  
+chi_sq_result <- chi_function(var[i])
+ 
+ result [[i]]<- chi_sq_result
+
+}
+
+
+# Combining the results into a data frame
+result_cat <- do.call(rbind, result)
+#Adding the category names
+result_cat$variable <- var
+
+
+result_cat<-result_cat |> 
+  mutate(p.value = round(p.value, 5)) 
+
+result_sig <- result_cat |> 
+  filter(p.value <= 0.05)
+
+
+selected_factor <- as.list(result_sig$variable)
+selected_factor <- unlist(selected_factor)
+```
+
+#### Numeric variables
+
+```{r}
+
+cor_data <- data_f |> 
+  dplyr::select(where(is.numeric),-allow_migrants)
+ 
+cor_data<- complete(mice(cor_data, m=2, method='rf'))
+
+correlation_matrix <- cor(cor_data)
+
+# Step 2: Use findCorrelation() to identify highly correlated features
+high_corr <- findCorrelation(correlation_matrix, cutoff = 0.6, exact = FALSE)
+
+# Step 3: Remove highly correlated features from the dataset
+selected_var <- cor_data[, -high_corr]
+
+selected_var <- names(selected_var)
+selected_var
+
+data_f_red <- data_f |> 
+  dplyr::select(selected_factor, selected_var, allow_migrants)
+
+```
+
+#### Target variable
+
+```{r}
+
+```
+
+#### Feature selecting using a random forest model
+
+```{r}
+
+set.seed(456)
+rf_model <- randomForest(allow_migrants ~ ., data = data_f_red, importance = TRUE)
 
 # Plot variable importance
 varImpPlot(rf_model, main="Variable Importance Plot")
@@ -148,18 +236,18 @@ top_features <- imp_features %>%
   arrange(desc(MeanDecreaseAccuracy)) %>%
   slice(1:20)
 
-# Convert row names to a new column
+ #Convert row names to a new column
 top_features$var <- rownames(top_features)
 
 top_f <- as.list(top_features$var)
 top_f <- unlist(top_f)
 top_f
+
+data_f_red <- data_f_red |> 
+  dplyr::select(top_f, allow_migrants)
 ```
 
 ```{r}
-
-data_f_red <- data_f |> 
-  dplyr::select(all_of(top_f), allow_migrants)
 
 data_cor <- data_f_red |> 
   dplyr::select(where(is.numeric))
@@ -169,6 +257,112 @@ cor_matrix <- data.frame(cor(data_cor))
 
 
 ggcorrplot(cor_matrix)
+```
+
+### Descriptive analysis
+
+| Variable name            |                                                                                                                                           |
+|--------------------|----------------------------------------------------|
+| Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)             |
+| imueclt                  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                  |
+| imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                         |
+| imwbcrm                  | Immigrants make country's crime problems worse or better (0 = Crime problems made worse, 10 = Crime problems made better)                 |
+| imbleco                  | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)            |
+| pplfair                  | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair) |
+| stfgov                   | How satisfied with the national government (1 = Extremely dissatisfied, 10 = Extremely satisfied)                                         |
+| lrscale                  | Placement on left right scale (0 = Left, 10 = Right)                                                                                      |
+| euftf                    | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)       |
+| stfdem                   | How satisfied with the way democracy works in country (1 = Extremely dissatisfied, 10 = Extremely satisfied)                              |
+| rlgdgr                   | How religious are you (0 = Not at all religious, 10 = Very religious)                                                                     |
+| ppltrst                  | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                    |
+| yrbrn                    | Year of birth                                                                                                                             |
+| trstep                   | Trust in the European Parliament (0 = No trust at all, 10 = Complete trust)                                                               |
+| stfeco                   | How satisfied with present state of economy in country (1 = Extremely dissatisfied, 10 = Extremely satisfied)                             |
+| impcntr                  | Allow many/few immigrants from poorer countries outside Europe (1 = Allow many to come and live here, 4 = Allow none)                     |
+| rlgblg                   | Belonging to particular religion or denomination (1 = yes, 2= no)                                                                         |
+| eisced                   | Highest level of education, ES - ISCED                                                                                                    |
+| gvrfga                   | Government should be generous judging applications for refugee status (1= Agree strongly, 5 = Disagree strongly)                          |
+| dfegcf                   | Different race or ethnic group: have any close friends (1 = Yes, several, 3 = No, none at all)                                            |
+| polintr                  | How interested in politics (1 = Very interested, 4 = Not at all interested)                                                               |
+
+```{r}
+descr(data_f_red)
+```
+
+#### Continuous variables
+
+```{r}
+
+num_var <- data_f_red |> 
+  dplyr::select(where(is.numeric))
+
+variables <- names(num_var)
+
+titles <- c("Country's cultural life undermined or enriched by immigrants",
+"Immigrants take jobs away in country or create new jobs",
+"Immigrants make country's crime problems worse or better",
+"Taxes and services: immigrants take out more than they put in or less",
+"Most people try to take advantage of you, or try to be fair",
+"How satisfied with the national government",
+"Placement on left right scale",
+"European Union: European unification go further or gone too far",
+"How satisfied with the way democracy works in country",
+"How religious are you",
+"Most people can be trusted or you can't be too careful",
+"Year of birth",
+"Trust in the European Parliament",
+"How satisfied with present state of economy in country")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_histogram(binwidth = 1, fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 5)
+
+```
+
+#### Factor variables
+
+```{r}
+
+fact_var <- data_f_red |> 
+  dplyr::select(where(is.factor), -allow_migrants)
+
+variables <- names(fact_var)
+
+titles <- c("Allow many/few immigrants from poorer countries outside Europe",
+            "Belonging to particular religion or denomination",
+            "Highest level of education, ES - ISCED",
+            "Government should be generous judging applications for refugee status",
+            "Different race or ethnic group: have any close friends",
+            "How interested in politics")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_bar(fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 5)
+
 ```
 
 ### Splitting the data set
@@ -307,8 +501,6 @@ partial(RfFit, pred.var = "imbgeco", plot = TRUE, rug = TRUE)
 
 ## Regression
 
-### Descriptives
-
 ```{r}
 
 data_f <- data_f |> 
@@ -357,6 +549,8 @@ data_f_red<- data_f |>
 ```
 
 ```{r}
+set.seed(456)
+
 in_train <- createDataPartition(data_f_red$cntry_cul_und, p = 0.8, list = FALSE)  
 training <- data_f_red[ in_train,]
 testing <- data_f_red[-in_train,]
@@ -392,6 +586,93 @@ non_zero_vars
 
 data_f_red <- data_f_red |> 
   dplyr::select(non_zero_vars, cntry_cul_und)
+
+```
+
+### Descriptive Analysis
+
+```{r}
+descr(data_f_red)
+```
+
+| Variable name | Description                                                                                                                               |
+|-----------------|-------------------------------------------------------|
+| ppltrst       | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                    |
+| pplfair       | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair) |
+| euftf         | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)       |
+| imbgeco       | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                        |
+| imtcjob       | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                         |
+| imbleco       | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)            |
+| dfeghbg       | Different race or ethnic group: contact, how bad or good (0 = Extremely bad, 10 = Extremely good)                                         |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+|               |                                                                                                                                           |
+
+#### Continuous variables
+
+```{r}
+
+num_var <- data_f_red |> 
+  dplyr::select(where(is.numeric), cntry_cul_und)
+
+variables <- names(num_var)
+
+titles <- c("")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_histogram(binwidth = 1, fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 5)
+
+```
+
+#### Factor variables
+
+```{r}
+
+fact_var <- data_f_red |> 
+  dplyr::select(where(is.factor), -allow_migrants)
+
+variables <- names(fact_var)
+
+titles <- c("")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_bar(fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 5)
 
 ```
 
@@ -616,22 +897,22 @@ rf_post <-postResample(pred = test_results$random_forest,  obs = test_results$cn
 #### Neural Network
 
 ```{r}
-nn_fit <- train(cntry_cul_und~., 
-                 data = training,
-                 method = "neuralnet",
-                 preProc=c('scale','center'),
-                 trControl = ctrl,
-                 tuneGrid = expand.grid(layer1 = c(4, 2), 
-                                        layer2 = c(1, 0),
-                                        layer3 = c(0)))
-
-plot(nn_fit)
+#nn_fit <- train(cntry_cul_und~., 
+#                 data = training,
+#                 method = "neuralnet",
+#                 preProc=c('scale','center'),
+#                 trControl = ctrl,
+#                 tuneGrid = expand.grid(layer1 = c(4, 2), 
+#                                        layer2 = c(1, 0),
+#                                        layer3 = c(0)))
+#
+#plot(nn_fit)
 ```
 
 ```{r}
-test_results$neural_network <- predict(nn_fit, testing)
-
-nn_post <-postResample(pred = test_results$neural_network,  obs = test_results$cntry_cul_und)
+#test_results$neural_network <- predict(nn_fit, testing)
+#
+#nn_post <-postResample(pred = test_results$neural_network,  obs = #test_results$cntry_cul_und)
 ```
 
 ### Indicating the best model
@@ -651,7 +932,7 @@ dotplot(results)
 
 ```
 
-### Prediction with the best model:
+### Prediction with the best model: Linear Model
 
 ```{r}
 qplot(test_results$lm, test_results$cntry_cul_und) + 
@@ -659,6 +940,13 @@ qplot(test_results$lm, test_results$cntry_cul_und) +
   lims(x = c(0, 15), y = c(0, 15)) +
   geom_abline(intercept = 0, slope = 1, colour = "blue") +
   theme_bw()
+```
+
+### Interpretation of the best model: Linear Model
+
+```{r}
+summary(lm_fit)
+
 ```
 
 ### Ensemble
@@ -678,14 +966,10 @@ postResample(pred = test_results$comb,  obs = test_results$cntry_cul_und)
 ### Final predictions
 
 ```{r}
-yhat = exp(test_results$comb)
+pred = test_results$comb
 
-head(yhat) # show the prediction for 6 home prices
+head(pred)
 
-hist(yhat, col="lightblue")
+hist(pred, col="lightblue")
 
 ```
-
-git reset --hard ce01fa1708409a7626f31728abd75182d64d72b2
-
-526e1dcd94ec64addcd3614692fdcf0c90604704 ce01fa1708409a7626f31728abd75182d64d72b2
