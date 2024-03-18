@@ -212,12 +212,6 @@ data_f_red <- data_f |>
 
 ```
 
-#### Target variable
-
-```{r}
-
-```
-
 #### Feature selecting using a random forest model
 
 ```{r}
@@ -262,7 +256,7 @@ ggcorrplot(cor_matrix)
 ### Descriptive analysis
 
 | Variable name            |                                                                                                                                           |
-|--------------------|----------------------------------------------------|
+|----------------------|--------------------------------------------------|
 | Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)             |
 | imueclt                  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                  |
 | imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                         |
@@ -287,6 +281,18 @@ ggcorrplot(cor_matrix)
 
 ```{r}
 descr(data_f_red)
+```
+
+#### Target variable
+
+```{r}
+
+order <- c("Allow_many", "Allow_some", "Allow_few", "Allow_none")
+
+data_f_red |> 
+  ggplot(aes(x= factor(allow_migrants, levels = order)))+
+  geom_bar()
+
 ```
 
 #### Continuous variables
@@ -595,39 +601,56 @@ data_f_red <- data_f_red |>
 descr(data_f_red)
 ```
 
-| Variable name | Description                                                                                                                               |
-|-----------------|-------------------------------------------------------|
-| ppltrst       | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                    |
-| pplfair       | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair) |
-| euftf         | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)       |
-| imbgeco       | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                        |
-| imtcjob       | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                         |
-| imbleco       | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)            |
-| dfeghbg       | Different race or ethnic group: contact, how bad or good (0 = Extremely bad, 10 = Extremely good)                                         |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
-|               |                                                                                                                                           |
+| Variable name            | Description                                                                                                                                     |
+|-------------------|-----------------------------------------------------|
+| cntry_cul_und (imueclt)  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                        |
+| ppltrst                  | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                          |
+| pplfair                  | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair)       |
+| euftf                    | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)             |
+| imbgeco                  | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                              |
+| imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                               |
+| imbleco                  | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)                  |
+| dfeghbg                  | Different race or ethnic group: contact, how bad or good (0 = Extremely bad, 10 = Extremely good)                                               |
+| polintr                  | How interested in politics (1 = Very interested, 4 = Not at all interested)                                                                     |
+| impcntr                  | Allow many/few immigrants from poorer countries outside Europe (1 = Allow many to come and live here, 4 = Allow none)                           |
+| aesfdrk                  | Feeling of safety of walking alone in local area after dark (1 = Very safe, 4 = Very unsafe)                                                    |
+| rlgblg                   | Belonging to particular religion or denomination (1 = Yes, 2 = No)                                                                              |
+| dscrntn                  | Discrimination of respondent's group: religion (0 = Not marked, 1 = Marked)                                                                     |
+| dscrlng                  | Discrimination of respondent's group: language (0 = Not marked, 1 = Marked)                                                                     |
+| brncntr                  | Born in country (1 = Yes, 2 = No)                                                                                                               |
+| blgetmg                  | Belong to minority ethnic group in country (1 = Yes, 2 = No)                                                                                    |
+| acetalv                  | People of minority race/ethnic group in current living area (1 = Almost nobody minority race/ethnic group, 3 = Many minority race/ethnic group) |
+| gvrfgap                  | Government should be generous judging applications for refugee status (1 = Agree strongly, 5 = Disagree strongly)                               |
+| dfegcf                   | Different race or ethnic group: have any close friends (1 = Yes, several, 3 = No, none at all)                                                  |
+| eisced                   | Highest level of education, ES - ISCED                                                                                                          |
+| hinctnta                 | Household's total net income, all sources                                                                                                       |
+| hincfel                  | Feeling about household's income nowadays                                                                                                       |
+| Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)                   |
+
+#### Target variable
+
+```{r}
+data_f_red |> 
+  ggplot(aes(x= cntry_cul_und))+
+  geom_bar()
+```
 
 #### Continuous variables
 
 ```{r}
 
 num_var <- data_f_red |> 
-  dplyr::select(where(is.numeric), cntry_cul_und)
+  dplyr::select(where(is.numeric), -cntry_cul_und)
 
 variables <- names(num_var)
 
-titles <- c("")
+titles <- c("Most people can be trusted or You can't be too careful",
+"Most people try to take advantage of you or Most people try to be fair",
+"European Union: European unification go further or gone too far",
+"Immigration bad or good for country's economy",
+"Immigrants take jobs away in country or create new jobs",
+"Taxes and services: immigrants take out more than they put in or less",
+"Different race or ethnic group: contact, how bad or good")
 
 colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
 
@@ -652,11 +675,25 @@ plot_grid(plotlist = plots, nrow = 5)
 ```{r}
 
 fact_var <- data_f_red |> 
-  dplyr::select(where(is.factor), -allow_migrants)
+  dplyr::select(where(is.factor), -cntry_cul_und)
 
 variables <- names(fact_var)
 
-titles <- c("")
+titles <- c("How interested in politics",
+"Allow many/few immigrants from poorer countries outside Europe",
+"Feeling of safety of walking alone in local area after dark",
+"Belonging to particular religion or denomination",
+"Discrimination of respondent's group: religion",
+"Discrimination of respondent's group: language",
+"Born in country",
+"Belong to minority ethnic group in country",
+"People of minority race/ethnic group in current living area",
+"Government should be generous judging applications for refugee status",
+"Different race or ethnic group: have any close friends",
+"Highest level of education, ES - ISCED",
+"Household's total net income, all sources",
+"Feeling about household's income nowadays",
+"Allow many/few immigrants of different race/ethnic group from majority")
 
 colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
 
