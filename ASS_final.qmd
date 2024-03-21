@@ -6,27 +6,19 @@ editor_options:
   chunk_output_type: console
 ---
 
-Tasks and evaluation:
-
-1.  Data cleaning and descriptive tools: 1 point
-
-2.  Classification (emphasis on interpretation): 1 points
-
-3.  Classification (emphasis on prediction): 4 points
-
-4.  Advanced Regression (emphasis on interpretation): 1 points
-
-5.  Advanced Regression (emphasis on prediction): 3 points
-
 ## Introduction
+
+This assignment aims to investigate attitudes against migrants in Spain. More specifically, it aims to discover which personal factors contribute to predicting whether Spanish people are in favour or against allowing more migrants with a different ethnicity and closely related to this to what extent people believe migrants undermine or enrich the Spanish culture. The first objective is crucial as the public opinion in a democratic system is closely related to policy making. In other words, indirectly the public opinion influences the policy discourse with respect to allowing migrants into Spain. A often posed argument for not allowing migrants to settle is that of cultural deterioration Hence, predicting these sentiments and finding factors that contribute to these sentiments, shed light on the background processes of forming these sentiments which are useful to establish policy to combat these negative sentiments. The data used for this analysis is obtained from the *European Social Survey* round 7.
 
 ### Libraries
 
 ```{r}
+#| output: false
+
 
 library(tidyverse)
-library(GGally) # ggplot2-based visualization of correlations
-library(factoextra) # ggplot2-based visualization of pca
+library(GGally) 
+library(factoextra) 
 library(countrycode)
 library(rworldmap)
 library(mice)
@@ -49,10 +41,15 @@ library(randomForest)
 ```
 
 ```{r}
+#| include: false
+
+
 data <-read.csv("C:/Users/rnvis/Desktop/Advanced_modeling/ESS7-final-ass/ESS7.csv")
 ```
 
 ## Data cleaning
+
+In the following chunk the data is cleaned by first specifying the NAs for each variable. Then, the number of NA per variable are checked to detect variables with a higher NA percentage than 50%. The variables uemp5yr and prtcldes have more tha 50% missing values and are therefore deselected from the data set. The variables are mutated to assign the right variable type and then the NAs are imputed using the 'mice' package.
 
 ```{r}
 data_c <- data |>
@@ -104,13 +101,37 @@ idno <- data_c$idno
 data_c<- data_c |> 
   dplyr::select(-idno)
 
+
+
+
+```
+
+```{r}
+#| include: false
+
+
+set.seed(456)
 #Imputing NA
 data_c_imp <- complete(mice(data_c, m=2, method='rf')) #rf = random forest
 
+```
+
+```{r}
 #Check for percentage NA after imputations 
 sapply(data_c_imp, function(x) sum(is.na(x))*100/nrow(data_c_imp))
+```
 
+## Classification analysis
 
+Classification methods are utilized to predict tolerance towards accepting migrants into Spain. First, the data set is reduced trough feature selection. Then, these variables are described both statistically and visually. At last, multiple classification methods are applied after which the best model is selected and used for prediction and interpretation.
+
+### The target variable
+
+*imdfetn:* Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)
+
+The target variable is renamed into *Allow_migrants* with 1 = Allow many, and 4 = Allow none. The proportional table shows the responses are rather equally dispersed over the 4 answer classes.
+
+```{r}
 data_f <- data_c_imp |> 
   mutate(allow_migrants = case_when(imdfetn == 1 ~"Allow_many",
                                     imdfetn == 2 ~"Allow_some",
@@ -123,13 +144,15 @@ data_f <- data_c_imp |>
 prop.table(table(data_f$allow_migrants))
 ```
 
-## Classification analysis
-
 ### Feature selection
 
 #### Factor variables
 
+The most useful factor variables are selected trough computing multiple chi-square tests between the independent variables and the target variable. Only independent variables that have a statistically significant association with the target variable are selected.
+
 ```{r}
+#| warning: false
+
 
 #Selecting factor variables
 data_factor <- data_f |> 
@@ -140,7 +163,7 @@ var <- names(data_factor)
 
 var_n <- c("polintr")
 
-
+# Create a function to perform Chi sqaure test between the dependent and independent variabele
 chi_function <-function(var_n){
   
  
@@ -156,9 +179,9 @@ chi_function <-function(var_n){
 }
 
 v <- chi_function(var_n)
-v 
 
 
+# Loop the chi-square test over all independent variables
 result <-list()
 
 for (i in seq_along (var)){
@@ -179,34 +202,44 @@ result_cat$variable <- var
 result_cat<-result_cat |> 
   mutate(p.value = round(p.value, 5)) 
 
+#Only keep significant associations
 result_sig <- result_cat |> 
   filter(p.value <= 0.05)
 
-
+#Select variables with significant associations
 selected_factor <- as.list(result_sig$variable)
 selected_factor <- unlist(selected_factor)
 ```
 
 #### Numeric variables
 
-```{r}
+To select the most informative numeric variables, the function 'findCorrelation()' from the Caret package is applied. This function inspects the correlation matrix and selects one of the two variables that are highly correlated among each other (r\>0.6). Then, these variables are selected to be deleted and saved in a list. Finally, only the variables with a significant associated with the target variable, the selected numerical variables and the target variable are kept in the data set.
 
+```{r}
+#| warning: false
+
+
+#Select numeric variables
 cor_data <- data_f |> 
   dplyr::select(where(is.numeric),-allow_migrants)
- 
+
+#Impute NA to do correlations
+set.seed(456)
 cor_data<- complete(mice(cor_data, m=2, method='rf'))
 
 correlation_matrix <- cor(cor_data)
 
-# Step 2: Use findCorrelation() to identify highly correlated features
+# Use findCorrelation() to identify highly correlated features
 high_corr <- findCorrelation(correlation_matrix, cutoff = 0.6, exact = FALSE)
 
-# Step 3: Remove highly correlated features from the dataset
+# Remove highly correlated features from the dataset
 selected_var <- cor_data[, -high_corr]
 
+#Create list with variables to be kept
 selected_var <- names(selected_var)
-selected_var
 
+
+#Select the selected variables
 data_f_red <- data_f |> 
   dplyr::select(selected_factor, selected_var, allow_migrants)
 
@@ -214,7 +247,10 @@ data_f_red <- data_f |>
 
 #### Feature selecting using a random forest model
 
-```{r}
+As he previous two analyses have not sufficiently reduced the number of variables, a random forest model is specified. Only the 20 most important features are selected for the final data set.
+
+```{r  fig.width=16, fig.height=10}
+#| warning: false
 
 set.seed(456)
 rf_model <- randomForest(allow_migrants ~ ., data = data_f_red, importance = TRUE)
@@ -233,15 +269,19 @@ top_features <- imp_features %>%
  #Convert row names to a new column
 top_features$var <- rownames(top_features)
 
+# Save column names of vraibles to be kept
 top_f <- as.list(top_features$var)
 top_f <- unlist(top_f)
 top_f
 
+#Finla variable selection
 data_f_red <- data_f_red |> 
   dplyr::select(top_f, allow_migrants)
 ```
 
-```{r}
+The selected numerical values seem to be associated to a certain extent which is unfavourable however not problematic for the analysis.
+
+```{r  fig.width=16, fig.height=10}
 
 data_cor <- data_f_red |> 
   dplyr::select(where(is.numeric))
@@ -256,34 +296,36 @@ ggcorrplot(cor_matrix)
 ### Descriptive analysis
 
 | Variable name            |                                                                                                                                           |
-|----------------------|--------------------------------------------------|
+|--------------------------|----------------------------------------------|
 | Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)             |
+| imbgeco                  | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                        |
 | imueclt                  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                  |
 | imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                         |
 | imwbcrm                  | Immigrants make country's crime problems worse or better (0 = Crime problems made worse, 10 = Crime problems made better)                 |
 | imbleco                  | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)            |
+| yrbrn                    | Year of birth                                                                                                                             |
 | pplfair                  | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair) |
 | stfgov                   | How satisfied with the national government (1 = Extremely dissatisfied, 10 = Extremely satisfied)                                         |
-| lrscale                  | Placement on left right scale (0 = Left, 10 = Right)                                                                                      |
 | euftf                    | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)       |
-| stfdem                   | How satisfied with the way democracy works in country (1 = Extremely dissatisfied, 10 = Extremely satisfied)                              |
+| lrscale                  | Placement on left right scale (0 = Left, 10 = Right)                                                                                      |
 | rlgdgr                   | How religious are you (0 = Not at all religious, 10 = Very religious)                                                                     |
-| ppltrst                  | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                    |
-| yrbrn                    | Year of birth                                                                                                                             |
-| trstep                   | Trust in the European Parliament (0 = No trust at all, 10 = Complete trust)                                                               |
-| stfeco                   | How satisfied with present state of economy in country (1 = Extremely dissatisfied, 10 = Extremely satisfied)                             |
+| ipeqopt                  | Important that people are treated equally and have equal opportunities (1 = Very much like me, 6 = Not like me at all)                    |
+| ipstrgv                  | Important that government is strong and ensures safety (1 = Very much like me, 6 = Not like me at all)                                    |
+| ipfrule                  | Important to do what is told and follow rules (1 = Very much like me, 6 = Not like me at all)                                             |
+| dfeghbg                  | Different race or ethnic group: contact, how bad or good (0 = Extremely good, 10 = Extremely bad)                                         |
 | impcntr                  | Allow many/few immigrants from poorer countries outside Europe (1 = Allow many to come and live here, 4 = Allow none)                     |
-| rlgblg                   | Belonging to particular religion or denomination (1 = yes, 2= no)                                                                         |
 | eisced                   | Highest level of education, ES - ISCED                                                                                                    |
-| gvrfga                   | Government should be generous judging applications for refugee status (1= Agree strongly, 5 = Disagree strongly)                          |
-| dfegcf                   | Different race or ethnic group: have any close friends (1 = Yes, several, 3 = No, none at all)                                            |
-| polintr                  | How interested in politics (1 = Very interested, 4 = Not at all interested)                                                               |
+| gvrfgap                  | Government should be generous judging applications for refugee status (1= Agree strongly, 5 = Disagree strongly)                          |
+| rlgblg                   | Belonging to particular religion or denomination (1 = yes, 2= no)                                                                         |
+| hincfel                  | Feeling about household's income nowadays (1 = Living comfortably on present income, 4 = Very difficult on present income)                |
 
 ```{r}
 descr(data_f_red)
 ```
 
 #### Target variable
+
+The target variable *Allow_migrants* have an almost equal count of responses in the categories 'Allow_some' and 'Allow_few', both being rather unextreme answers. The least number of responses are in 'Allow_none'.
 
 ```{r}
 
@@ -297,359 +339,31 @@ data_f_red |>
 
 #### Continuous variables
 
-```{r}
+The majority of people values having a strong government that ensures safety (*ipstrgv)* and believe all people should be treated eqaully (*ipeqopt).* The three variables related to migrants and the economy: *imbgeco, imtcjob* and *imbleco* show a large proportion of the respondents votes 5 on a scale of 0 to 10 which can be interpreted as voting neutral. In other words, it seems like respondents do not have a strong opinion on the effect of migrants on the economy. However, respondents do tend to report they have had good contact with people from a different race or ethnic group rather than bad contact.
+
+```{r  fig.width=16, fig.height=10}
+#| warning: false
 
 num_var <- data_f_red |> 
   dplyr::select(where(is.numeric))
 
 variables <- names(num_var)
 
-titles <- c("Country's cultural life undermined or enriched by immigrants",
+titles <- c(
+"Immigration bad or good for country's economy",
+"Country's cultural life undermined or enriched by immigrants",
 "Immigrants take jobs away in country or create new jobs",
 "Immigrants make country's crime problems worse or better",
 "Taxes and services: immigrants take out more than they put in or less",
+"Year of birth",
 "Most people try to take advantage of you, or try to be fair",
 "How satisfied with the national government",
+"European Union: European unification go further or gone too far",
 "Placement on left right scale",
-"European Union: European unification go further or gone too far",
-"How satisfied with the way democracy works in country",
 "How religious are you",
-"Most people can be trusted or you can't be too careful",
-"Year of birth",
-"Trust in the European Parliament",
-"How satisfied with present state of economy in country")
-
-colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
-
-# Initialize an empty plot list
-plots <- list()
-
-# Loop through variables to create plots
-for (i in 1:length(variables)) {
-  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
-    geom_histogram(binwidth = 1, fill = colors[i], color = "#808080") + 
-    labs(title = titles[i]) +
-    theme_classic()
-}
-
-# Combine plots into a grid
-plot_grid(plotlist = plots, nrow = 5)
-
-```
-
-#### Factor variables
-
-```{r}
-
-fact_var <- data_f_red |> 
-  dplyr::select(where(is.factor), -allow_migrants)
-
-variables <- names(fact_var)
-
-titles <- c("Allow many/few immigrants from poorer countries outside Europe",
-            "Belonging to particular religion or denomination",
-            "Highest level of education, ES - ISCED",
-            "Government should be generous judging applications for refugee status",
-            "Different race or ethnic group: have any close friends",
-            "How interested in politics")
-
-colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
-
-# Initialize an empty plot list
-plots <- list()
-
-# Loop through variables to create plots
-for (i in 1:length(variables)) {
-  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
-    geom_bar(fill = colors[i], color = "#808080") + 
-    labs(title = titles[i]) +
-    theme_classic()
-}
-
-# Combine plots into a grid
-plot_grid(plotlist = plots, nrow = 5)
-
-```
-
-### Splitting the data set
-
-```{r}
-
-in_train <- createDataPartition(data_f_red$allow_migrants, p = 0.8, list = FALSE)  
-training <- data_f_red[ in_train,]
-testing <- data_f_red[-in_train,]
-nrow(training)
-nrow(testing)
-```
-
-### The control function
-
-```{r}
-ctrl <- trainControl(method = "repeatedcv", 
-                     number = 10, #change back to 10!!!!
-                     classProbs = T,
-                     verboseIter = T)
-
-levels(training$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none"  )
-levels(testing$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none")
-
-
-```
-
-### Training using different algorithms
-
-#### Random Forest
-
-```{r}
-# Define a grid for the hyper-parameters
-param_grid = expand.grid(gamma = seq(0, 1, 0.1), lambda = seq(0.1, 0.9, 0.1)) 
-
-mtry <- sqrt(ncol(training))
-tunegrid <- expand.grid(.mtry=mtry)
-
-RfFit <- train(allow_migrants ~ ., 
-                method ="rf", 
-                data = training,
-                preProcess = c("center", "scale"),
-                tuneGrid=tunegrid, 
-                metric="Accuracy", 
-                trControl = ctrl)
-RfFit
-
-```
-
-#### k-Nearest Neighbour
-
-```{r}
-knnFit <- train(allow_migrants ~ ., 
-                method ="knn", #name of the model
-                data = training,
-                preProcess = c("center", "scale"),
-                metric="Accuracy", 
-                trControl = ctrl)
-
-knnFit
-```
-
-#### Recursive Partitioning and Regression Trees
-
-```{r}
-
-rpartFit <- train(allow_migrants ~ ., 
-                method ="rpart", #name of the model
-                data = training,
-                preProcess = c("center", "scale"),
-                metric="Accuracy", 
-                trControl = ctrl)
-rpartFit
-```
-
-### Performance analysis
-
-```{r}
-resample_results <- resamples(list(RF = RfFit, KNN = knnFit, RPART = rpartFit ))
-summary(resample_results,metric = c("Kappa","Accuracy"))
-```
-
-```{r}
-densityplot(resample_results , metric = "Accuracy" ,auto.key = list(columns = 3))
-bwplot(resample_results , metric = c("Kappa","Accuracy"))
-
-```
-
-### Prediction and interpretation based on the best model: Random Forest
-
-#### Prediction
-
-```{r}
-
-predictions <- predict(RfFit, testing, preProcess = c("center", "scale"),type = "prob")
-
-predicted_classes <- apply(predictions, 1, which.max)
-class_labels <- levels(testing$allow_migrants)
-predictions <- class_labels[predicted_classes]
-
-# Convert prediction to factor with levels matching testing$allow_migrants
-predictions <- factor(predictions, levels = levels(testing$allow_migrants))
-
-
-# Create confusion matrix
-confusionMatrix(predictions, testing$allow_migrants)$table
-confusionMatrix(predictions, testing$allow_migrant)$overall[1:2]
-
-```
-
-### Interpretation
-
-#### Variable importance
-
-```{r}
-
-rf_imp <- varImp(RfFit, scale = F) 
-plot(rf_imp, scales = list(y = list(cex = .95)))
-
-
-```
-
-#### Partial dependence plots
-
-```{r}
-
-partial(RfFit, pred.var = "imwbcnt", plot = TRUE, rug = TRUE)
-partial(RfFit, pred.var = "imbgeco", plot = TRUE, rug = TRUE)
-```
-
-### Ensemble
-
-```{r}
-
-```
-
-## Regression
-
-```{r}
-
-data_f <- data_f |> 
-  rename(imueclt = cntry_cul_und)
-```
-
-### Feature selection
-
-```{r}
-
-#Selecting numeric variables
-
-cor_data <- data_f |> 
-  dplyr::select(where(is.numeric),-cntry_cul_und) 
- 
-cor_data<- complete(mice(cor_data, m=2, method='rf'))
-
-correlation_matrix <- cor(cor_data)
-
-# Step 2: Use findCorrelation() to identify highly correlated features
-high_corr <- findCorrelation(correlation_matrix, cutoff = 0.6, exact = FALSE)
-
-# Step 3: Remove highly correlated features from the dataset
-selected_var <- cor_data[, -high_corr]
-
-selected_var <- names(selected_var)
-selected_var
-
-cor_data<- cor_data |> 
-  dplyr::select(selected_var)
-
-cor_data$cntry_cul_und <- data_f$cntry_cul_und
-
-corr<- cor(cor_data$cntry_cul_und, cor_data[,-29])
-corr<-round(corr,4)
-
-barplot(corr, names.arg = names(cor_data[,-29]), col = "steelblue", las = 2 , adj = 0.45, main = "Correlation with cntry_cul_und ")
-
-cor_df <- as.data.frame(corr)
-
-# Extract variable names with correlations higher than 0.2
-selected_vars <- names(cor_df)[cor_df > 0.2]
-
-data_f_red<- data_f |> 
-  dplyr::select(selected_vars, cntry_cul_und, where(is.factor))
-```
-
-```{r}
-set.seed(456)
-
-in_train <- createDataPartition(data_f_red$cntry_cul_und, p = 0.8, list = FALSE)  
-training <- data_f_red[ in_train,]
-testing <- data_f_red[-in_train,]
-nrow(training)
-nrow(testing)
-
-# Define your control parameters
-ctrl <- trainControl(method = "cv", number = 10)
-
-# Define your lasso tuning grid
-lasso_grid <- expand.grid(alpha = 1, lambda = seq(0.001, 1, length = 100))
-
-# Train the Lasso regression model
-lasso <- train(cntry_cul_und ~ .,
-               data = training,
-               method = 'glmnet',
-               preProc = c('scale', 'center'),
-               tuneGrid = lasso_grid,
-               trControl = ctrl)
-
-coef(lasso$finalModel, lasso$finalModel$lambdaOpt)
-lasso_coef <- coef(lasso$finalModel, s = lasso$finalModel$lambdaOpt)
-
-non_zero_vars <- rownames(lasso_coef)[lasso_coef[, 1] != 0]
-
-non_zero_vars <-str_replace_all(non_zero_vars, "\\d", "")
-non_zero_vars <-str_replace_all(non_zero_vars, "Allow.*", "")
-non_zero_vars <- non_zero_vars[- 1]
-
-non_zero_vars <- unique(non_zero_vars)
-
-non_zero_vars
-
-data_f_red <- data_f_red |> 
-  dplyr::select(non_zero_vars, cntry_cul_und)
-
-```
-
-### Descriptive Analysis
-
-```{r}
-descr(data_f_red)
-```
-
-| Variable name            | Description                                                                                                                                     |
-|-------------------|-----------------------------------------------------|
-| cntry_cul_und (imueclt)  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                        |
-| ppltrst                  | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                          |
-| pplfair                  | Most people try to take advantage of you, or try to be fair (0 = Most people try to take advantage of me, 1 = Most people try to be fair)       |
-| euftf                    | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)             |
-| imbgeco                  | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                              |
-| imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                               |
-| imbleco                  | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)                  |
-| dfeghbg                  | Different race or ethnic group: contact, how bad or good (0 = Extremely bad, 10 = Extremely good)                                               |
-| polintr                  | How interested in politics (1 = Very interested, 4 = Not at all interested)                                                                     |
-| impcntr                  | Allow many/few immigrants from poorer countries outside Europe (1 = Allow many to come and live here, 4 = Allow none)                           |
-| aesfdrk                  | Feeling of safety of walking alone in local area after dark (1 = Very safe, 4 = Very unsafe)                                                    |
-| rlgblg                   | Belonging to particular religion or denomination (1 = Yes, 2 = No)                                                                              |
-| dscrntn                  | Discrimination of respondent's group: religion (0 = Not marked, 1 = Marked)                                                                     |
-| dscrlng                  | Discrimination of respondent's group: language (0 = Not marked, 1 = Marked)                                                                     |
-| brncntr                  | Born in country (1 = Yes, 2 = No)                                                                                                               |
-| blgetmg                  | Belong to minority ethnic group in country (1 = Yes, 2 = No)                                                                                    |
-| acetalv                  | People of minority race/ethnic group in current living area (1 = Almost nobody minority race/ethnic group, 3 = Many minority race/ethnic group) |
-| gvrfgap                  | Government should be generous judging applications for refugee status (1 = Agree strongly, 5 = Disagree strongly)                               |
-| dfegcf                   | Different race or ethnic group: have any close friends (1 = Yes, several, 3 = No, none at all)                                                  |
-| eisced                   | Highest level of education, ES - ISCED                                                                                                          |
-| hinctnta                 | Household's total net income, all sources                                                                                                       |
-| hincfel                  | Feeling about household's income nowadays                                                                                                       |
-| Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)                   |
-
-#### Target variable
-
-```{r}
-data_f_red |> 
-  ggplot(aes(x= cntry_cul_und))+
-  geom_bar()
-```
-
-#### Continuous variables
-
-```{r}
-
-num_var <- data_f_red |> 
-  dplyr::select(where(is.numeric), -cntry_cul_und)
-
-variables <- names(num_var)
-
-titles <- c("Most people can be trusted or You can't be too careful",
-"Most people try to take advantage of you or Most people try to be fair",
-"European Union: European unification go further or gone too far",
-"Immigration bad or good for country's economy",
-"Immigrants take jobs away in country or create new jobs",
-"Taxes and services: immigrants take out more than they put in or less",
+"Important that people are treated equally and have equal opportunities",
+"Important that government is strong and ensures safety",
+"Important to do what is told and follow rules",
 "Different race or ethnic group: contact, how bad or good")
 
 colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
@@ -672,6 +386,337 @@ plot_grid(plotlist = plots, nrow = 5)
 
 #### Factor variables
 
+Most respondents vote more towards the opinion that the *government should be generous judging applications for refugee status* (*gvrfgap).* However, respondents do seem to hold different opinion regarding migrants from poorer countries outside of Europe as the majority of votes are in the categories 'Allow some' and 'Allow few'. The majority of people belong to a religious denomination (*rlgblg)*
+
+```{r}
+#| warning: false
+
+fact_var <- data_f_red |> 
+  dplyr::select(where(is.factor), -allow_migrants)
+
+variables <- names(fact_var)
+
+titles <- c("Allow many/few immigrants from poorer countries outside Europe",
+"Highest level of education, ES - ISCED",
+"Government should be generous judging applications for refugee status",
+"Belonging to particular religion or denomination",
+"Feeling about household's income nowadays")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_bar(fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 3)
+
+```
+
+### Splitting the data set
+
+The data set is split into test and training data. The train data will be used to train the models and select the best one. Then the test data is used to compare the predictions of the best model with actual unseen data from the test data.
+
+```{r}
+
+set.seed(456)
+in_train <- createDataPartition(data_f_red$allow_migrants, p = 0.8, list = FALSE)  
+training <- data_f_red[ in_train,]
+testing <- data_f_red[-in_train,]
+nrow(training)
+nrow(testing)
+```
+
+### The control function
+
+The control function is specified to use repeated cross validations with 10 iterations.
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 10, 
+                     classProbs = T,
+                     verboseIter = T)
+
+# Specifying the levels
+levels(training$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none"  )
+levels(testing$allow_migrants)=c("Allow_many","Allow_some", "Allow_few", "Allow_none")
+
+
+```
+
+### Training using different algorithms
+
+The machine learning algorithms applied are Random Forest, k-Nearest Neighbour and Recursive partitioning and Regression trees. The first algorithm, Random Forest, combines multiple decision trees trough *bagging* and combines the obtained prediction from each tree. The algorithm is beneficial as it is less prone to overfitting, performs well in cases of non-linearity and can easily handle categorical features. The second algorithm, k-Nearest Neighbour, is a data mining model based on computing the distances between observations and then classifying them based on spacial proximity. Again the benefit of this algorithm is that it performs well in case on non-linear relationships. The final algorithm, RPART, is a type of decision tree algorithm that recursively splits the data into subsets based on the values of input features, resulting in a tree-like structure for classification. After training these three models, the best model is chosen based on the performance metrics: Accuracy and Kappa.
+
+#### Random Forest
+
+```{r}
+#| output: false
+
+# Define a grid for the hyper-parameters
+param_grid = expand.grid(gamma = seq(0, 1, 0.1), lambda = seq(0.1, 0.9, 0.1)) 
+
+mtry <- sqrt(ncol(training))
+tunegrid <- expand.grid(.mtry=mtry)
+
+RfFit <- train(allow_migrants ~ ., 
+                method ="rf", 
+                data = training,
+                preProcess = c("center", "scale"),
+                tuneGrid=tunegrid, 
+                metric="Accuracy", 
+                trControl = ctrl)
+
+```
+
+#### k-Nearest Neighbour
+
+```{r}
+#| output: false
+
+
+knnFit <- train(allow_migrants ~ ., 
+                method ="knn", #name of the model
+                data = training,
+                preProcess = c("center", "scale"),
+                metric="Accuracy", 
+                trControl = ctrl)
+
+knnFit
+
+```
+
+#### Recursive Partitioning and Regression Trees
+
+```{r}
+#| output: false
+
+rpartFit <- train(allow_migrants ~ ., 
+                method ="rpart", #name of the model
+                data = training,
+                preProcess = c("center", "scale"),
+                metric="Accuracy", 
+                trControl = ctrl)
+
+
+```
+
+### Performance analysis
+
+The model with the highest accuracy, that is the highest percentage of correctly predicted cased when introducing new data and the model with the highest Kappa which signifies the level of agreement between the predictions made by a classification model and the actual class labels, corrected for agreement occurring by chance. The Accuracy and the Kappa values are 0.80 and 0.72 respectively and are rather high. The accuracy-density plot shows the distribution of accuracy is almost normally distributed over the 10 cross-validations and is shifted more to the right then the distributions of the KNN and RPART models.
+
+```{r}
+#Collect the metrics for the trained machine learning models
+resample_results <- resamples(list(RF = RfFit, KNN = knnFit, RPART = rpartFit ))
+
+#Summarise
+summary(resample_results,metric = c("Kappa","Accuracy"))
+```
+
+```{r}
+
+#Create plot to show differences in Kappa and Accuracy
+bwplot(resample_results , metric = c("Kappa","Accuracy"))
+
+# Create density plot
+densityplot(resample_results , metric = "Accuracy" ,auto.key = list(columns = 3))
+
+```
+
+### Prediction and interpretation based on the best model: Random Forest
+
+#### Prediction
+
+The confusion matrix shows the correctly and mistakenly predicted cases. The final Accuracy is 0.82 entailing that the model is able to predict correctly in 82% of the cases. The predicted vs actual values plot shows the correctly predicted and wrongly predicted cases. Interestingly, the most commonly prediction error seems to be made for actual values being 'Allow_none' but predicted as 'Allow_many'.
+
+```{r}
+
+predictions <- predict(RfFit, testing, preProcess = c("center", "scale"),type = "prob")
+
+predicted_classes <- apply(predictions, 1, which.max)
+class_labels <- levels(testing$allow_migrants)
+predictions <- class_labels[predicted_classes]
+
+# Convert prediction to factor with levels matching testing$allow_migrants
+predictions <- factor(predictions, levels = levels(testing$allow_migrants))
+
+
+# Create confusion matrix
+confusionMatrix(predictions, testing$allow_migrants)$table
+confusionMatrix(predictions, testing$allow_migrant)$overall[1:2]
+
+#Plot the predicted vs the actual values
+ggplot(data = testing, aes(x = predictions, y = allow_migrants)) +
+  geom_jitter(width = 0.2, alpha = 0.5)+
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(title = "Predicted vs. Actual",
+       x = "Predicted Values",
+       y = "Actual Values")
+
+```
+
+### Interpretation
+
+#### Variable importance
+
+The 5 most important variables for the Random Forest model are *impcntr* (Allow many/few immigrants from poorer countries outside Europe), *imueclt* (Country's cultural life undermined or enriched by immigrants), *imbgeco* (Immigration bad or good for country's economy), *yrbrn* (Year of birth) and *imtcjob* (Immigrants take jobs away in country or create new jobs).
+
+```{r}
+
+rf_imp <- varImp(RfFit, scale = F) 
+plot(rf_imp, scales = list(y = list(cex = .95)))
+
+```
+
+## Advanced Regression and Machine Learning Models
+
+```{r}
+
+data_f <- data_f |> 
+  rename(imueclt = cntry_cul_und)
+```
+
+### Feature selection
+
+A lasso regression is applied to reduce the number of features included in the analysis.
+
+```{r}
+#| output: false
+
+set.seed(456)
+
+in_train <- createDataPartition(data_f$cntry_cul_und, p = 0.8, list = FALSE)  
+training <- data_f[ in_train,]
+testing <- data_f[-in_train,]
+nrow(training)
+nrow(testing)
+
+# Define your control parameters
+ctrl <- trainControl(method = "cv", number = 10)
+
+# Define your lasso tuning grid
+lasso_grid <- expand.grid(alpha = 1, lambda = seq(0.001, 1, length = 100))
+
+# Train the Lasso regression model
+lasso <- train(cntry_cul_und ~ .,
+               data = training,
+               method = 'glmnet',
+               preProc = c('scale', 'center'),
+               tuneGrid = lasso_grid,
+               trControl = ctrl)
+
+# Obtain the lasso coefficients
+coef(lasso$finalModel, lasso$finalModel$lambdaOpt)
+lasso_coef <- coef(lasso$finalModel, s = lasso$finalModel$lambdaOpt)
+
+# Create a list of non-zero variables
+non_zero_vars <- rownames(lasso_coef)[lasso_coef[, 1] != 0]
+
+# As the lasso gives results per class of each factor variable but the full variable needs the be kept, the variables are stripped of signs that indicate the class of a variable.
+non_zero_vars <-str_replace_all(non_zero_vars, "\\d", "")
+non_zero_vars <-str_replace_all(non_zero_vars, "Allow.*", "")
+non_zero_vars <- non_zero_vars[- 1]
+
+
+
+```
+
+```{r}
+# Only select the unique variables to avoid having variables double
+non_zero_vars <- unique(non_zero_vars)
+
+non_zero_vars
+
+# Select only the filtered non-zero variables and the target variable
+data_f_red <- data_f |> 
+  dplyr::select(non_zero_vars, cntry_cul_und)
+```
+
+### Descriptive Analysis
+
+| Variable name            | Description                                                                                                                                                                                                                                        |
+|--------------------------|----------------------------------------------|
+| cntry_cul_und (imueclt)  | Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched)                                                                                                                           |
+| ppltrst                  | Most people can be trusted or you can't be too careful (0 = You can't be too careful, 10 = Most people can be trusted)                                                                                                                             |
+| trstlgl                  | Trust in the legal system (0 = No trust at all, 10 = Complete trust                                                                                                                                                                                |
+| lrscale                  | Placement on left right scale (0 = Left, 10 = Right)                                                                                                                                                                                               |
+| stfgov                   | How satisfied with the national government (1 = Extremely dissatisfied, 10 = Extremely satisfied)                                                                                                                                                  |
+| euftf                    | European Union: European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)                                                                                                                |
+| imbgeco                  | Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)                                                                                                                                                 |
+| imwbcnt                  | Immigrants make country worse or better place to live ( 0 = Worse place, 10 = Better place)                                                                                                                                                        |
+| rlgdgr                   | How religious are you (0 = Not at all religious, 10 = Very religious)                                                                                                                                                                              |
+| imtcjob                  | Immigrants take jobs away in country or create new jobs (0 = Take jobs away, 1 = Create new jobs)                                                                                                                                                  |
+| imbleco                  | Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)                                                                                                                     |
+| yrbrn                    | Year of birth                                                                                                                                                                                                                                      |
+| ipeqopt                  | Important that people are treated equally and have equal opportunities (1 = Very much like me, 6 = Not like me at all)                                                                                                                             |
+| impsafe                  | Important to live in secure and safe surroundings (1 = Very much like me, 6 = Not like me at all)                                                                                                                                                  |
+| polintr                  | How interested in politics (1 = Very interested, 4 = Not at all interested)                                                                                                                                                                        |
+| impcntr                  | Allow many/few immigrants from poorer countries outside Europe (1 = Allow many to come and live here, 4 = Allow none)                                                                                                                              |
+| brncntr                  | Born in country (1 = Yes, 2 = No)                                                                                                                                                                                                                  |
+| gvrfgap                  | Government should be generous judging applications for refugee status (1 = Agree strongly, 5 = Disagree strongly)                                                                                                                                  |
+| maritalb                 | Legal marital status (1= Legally married 2= In a legally registered civil union 3= Legally separated 4= Legally divorced/Civil union dissolved 5= Widowed/Civil partner died 6= None of these (NEVER married or in legally registered civil union) |
+| eisced                   | Highest level of education, ES - ISCED                                                                                                                                                                                                             |
+| hinctnta                 | Household's total net income, all sources                                                                                                                                                                                                          |
+| hincfel                  | Feeling about household's income nowadays (1 = Living comfortably on present income, 4 = Very difficult on present income)                                                                                                                         |
+| Allow_migrants (imdfetn) | Allow many/few immigrants of different race/ethnic group from majority (1 = Allow many to come and live here, 4 = Allow none)                                                                                                                      |
+
+```{r}
+descr(data_f_red)
+```
+
+#### Target variable
+
+The distribution of the target variable *cntry_cul_und:* Country's cultural life undermined or enriched by immigrants, shows most respondents to vote the exact middle of the scale between *cultural life underminded* and *cultural life enriched* which can be interpreted as voting neutral. However, the total distribution is more skewed to the skewed to the left showing that the majority of respondents vote more towards the cultural life being enriched.
+
+```{r}
+ggplot(data_f_red, aes(x = cntry_cul_und)) +
+  geom_bar() +
+  scale_x_continuous(breaks = c(0, 10), labels = c("Cultural life undermined", "Cultural life enriched"))
+```
+
+#### Continuous variables
+
+The three variables related to migrants and the economy: *imbgeco, imtcjob* and *imbleco* show a large proportion of the respondents votes 5 on a scale of 0 to 10 which can be interpreted as voting neutral. In other words, it seems like respondents do not have a strong opinion on the effect of migrants on the economy. Similar resuls are shown to the statement if migrants make the country a better or worse place to live (imwbcnt*).* Moreover, respondents seem to greatly value equal treatment (*ipeqopt)* and living in safe surroundings (*impsafe).* Most respondents identify themselves as being center with regards to the political scale. There seems to be slight skew to the right indicating that respondents in the sample are somewhat more right winged than left winged.
+
+```{r}
+
+num_var <- data_f_red |> 
+  dplyr::select(where(is.numeric), -cntry_cul_und)
+
+variables <- names(num_var)
+
+titles <- c("Most people can be trusted or you can't be too careful", "Trust in the legal system", "Placement on left right scale", "How satisfied with the national government", "European Union: European unification go further or gone too far", "Immigration bad or good for country's economy", "Immigrants make country worse or better place to live", "How religious are you", "Immigrants take jobs away in country or create new jobs", "Taxes and services: immigrants take out more than they put in or less", "Year of birth", "Important that people are treated equally and have equal opportunities", "Important to live in secure and safe surroundings")
+
+colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
+
+# Initialize an empty plot list
+plots <- list()
+
+# Loop through variables to create plots
+for (i in 1:length(variables)) {
+  plots[[i]] <- ggplot(data_f_red, aes_string(variables[i])) +
+    geom_histogram(binwidth = 1, fill = colors[i], color = "#808080") + 
+    labs(title = titles[i]) +
+    theme_classic()
+}
+
+# Combine plots into a grid
+plot_grid(plotlist = plots, nrow = 5)
+
+```
+
+#### Factor variables
+
+The variables *brncntr:* Born in country logically is highly imbalanced which causes them to hold only limited variance. Most respondents vote more towards the opinion that the *government should be generous judging applications for refugee status* (*gvrfgap).* However, respondents do seem to hold different opinion regarding migrants from poorer countries outside of Europe as the majority of votes are in the categories 'Allow some' and 'Allow few'. Lastly, respondents are mostly *coping on present income* or *living comfortably on present income.*
+
 ```{r}
 
 fact_var <- data_f_red |> 
@@ -679,21 +724,7 @@ fact_var <- data_f_red |>
 
 variables <- names(fact_var)
 
-titles <- c("How interested in politics",
-"Allow many/few immigrants from poorer countries outside Europe",
-"Feeling of safety of walking alone in local area after dark",
-"Belonging to particular religion or denomination",
-"Discrimination of respondent's group: religion",
-"Discrimination of respondent's group: language",
-"Born in country",
-"Belong to minority ethnic group in country",
-"People of minority race/ethnic group in current living area",
-"Government should be generous judging applications for refugee status",
-"Different race or ethnic group: have any close friends",
-"Highest level of education, ES - ISCED",
-"Household's total net income, all sources",
-"Feeling about household's income nowadays",
-"Allow many/few immigrants of different race/ethnic group from majority")
+titles <- c("How interested in politics", "Allow many/few immigrants from poorer countries outside Europe", "Born in country", "Government should be generous judging applications for refugee status", "Legal marital status", "Highest level of education, ES - ISCED", "Household's total net income, all sources", "Feeling about household's income nowadays", "Allow many/few immigrants of different race/ethnic group from majority")
 
 colors <- c("skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f", "skyblue3", "pink", "#6a6ad9", "#e65100", "#15ad4f")
 
@@ -715,7 +746,11 @@ plot_grid(plotlist = plots, nrow = 5)
 
 ### Splitting the data set
 
+The data set is split into test and training data. The train data will be used to train the models and select the best one. Then the test data is used to compare the predictions of the best model with actual unseen data from the test data.
+
 ```{r}
+
+set.seed(456)
 in_train <- createDataPartition(data_f_red$cntry_cul_und, p = 0.8, list = FALSE)  
 training <- data_f_red[ in_train,]
 testing <- data_f_red[-in_train,]
@@ -725,61 +760,84 @@ nrow(testing)
 
 ### The control function
 
+The control function is specified to use repeated cross validations with 10 iterations.
+
 ```{r}
+
 ctrl <- trainControl(method = "repeatedcv", 
                      number = 10, 
                      verboseIter = T)
 
 ```
 
-### Training using different algorithms
+### Training multiple algorithms
+
+#### Data frame to store test results
 
 ```{r}
+
 test_results <- data.frame(cntry_cul_und = testing$cntry_cul_und)
 ```
 
 #### Linear Model
 
+As the target variable ranges from 0 to 10, and equal distances between steps can be assumed, the target variable is similar to a continuous variable which makes the application of a linear model applicable
+
 ```{r}
+#| output: false
+
+set.seed(456)
 lm_fit <- train(cntry_cul_und~., data = training, 
                  method = "lm",
                  preProc=c('scale', 'center'),
                  trControl = ctrl)
-lm_fit
+
+
 ```
 
 ```{r}
+set.seed(456)
 test_results$lm <- predict(lm_fit, testing)
+
 
 lm_post <-postResample(pred = test_results$lm,  obs = test_results$cntry_cul_und)
 ```
 
 #### Linear Model: Poisson
 
-Non-negative discrete values
+Theoretically, a linear poisson model should be a better fit than a general linear model as the target variable contains non-negative discrete values.
 
 ```{r}
+#| output: false
+
+
+set.seed(456)
 lm_poisson_fit <- train(cntry_cul_und~., data = training, 
                  method = "lm", 
                  family = poison,
                  preProc=c('scale', 'center'),
                  trControl = ctrl)
-lm_poisson_fit
+
 
 
 ```
 
 ```{r}
+set.seed(456)
 test_results$lm_poisson <- predict(lm_poisson_fit, testing)
+
 
 lm_poisson_post <-postResample(pred = test_results$lm_poisson,  obs = test_results$cntry_cul_und)
 ```
 
 #### Linear Model: Quasi-Poisson
 
-When the variance is significantly larger than the mean and overdispersion occurs. The quasi-poisson model is able to combat this as it assumes that variance can be modeled as a linear function of the mean and computes an overdispersion factor ϕ relating to the mean and variance: Var(Y)=ϕ∗mean(Y)
+The quasi-poisson model is beneficial for combating overdispersion as it assumes that variance can be modeled as a linear function of the mean and computes an overdispersion factor.
 
 ```{r}
+#| output: false
+
+set.seed(456)
 
 lm_quasi_poisson_fit <- train(cntry_cul_und~., data = training, 
                  method = "lm", 
@@ -787,7 +845,7 @@ lm_quasi_poisson_fit <- train(cntry_cul_und~., data = training,
                  preProc=c('scale', 'center'),
                  trControl = ctrl)
 
-lm_quasi_poisson_fit
+
 
 ```
 
@@ -799,23 +857,33 @@ lm_quasi_poisson_post <-postResample(pred = test_results$quasi_poisson,  obs = t
  
 ```
 
-#### Foreward regression
+#### Forward regression
+
+As we have a high-dimensional regression problem, model selection methods are beneficial to select a model with the optimal variables. In forward regression, a variable is added in each iteration and selected if this variable improves the model.
 
 ```{r}
+#| output: false
+
+
+set.seed(456)
 for_fit <- train(cntry_cul_und~., data = training, 
                   method = "leapForward", 
                   preProc=c('scale', 'center'),
                   tuneGrid = expand.grid(nvmax = 4:10),
                   trControl = ctrl)
 
-for_fit
-plot(for_fit)
 
-coef(for_fit$finalModel, for_fit$bestTune$nvmax)
+
 ```
 
 ```{r}
+#| output: false
+
+
+plot (for_fit)
+
 test_results$foreward <- predict(for_fit, testing)
+
 
 for_post <-postResample(pred = test_results$foreward,  obs = test_results$cntry_cul_und)
 
@@ -824,19 +892,31 @@ for_post <-postResample(pred = test_results$foreward,  obs = test_results$cntry_
 
 #### Backward regression
 
+In backward regression, all variables are added to the model at the start after which in each iteration a variable is removed or kept depending on whether removing this variable improved the model.
+
 ```{r}
+#| output: false
+
+
+set.seed(456)
 back_fit <- train(cntry_cul_und~., data = training, 
                    method = "leapBackward", 
                    preProc=c('scale', 'center'),
                    tuneGrid = expand.grid(nvmax = 4:10),
                    trControl = ctrl)
-back_fit
-plot(back_fit)
-coef(back_fit$finalModel, back_fit$bestTune$nvmax)
+
+
+
+
 ```
 
 ```{r}
+
+plot(back_fit)
+
+set.seed(456)
 test_results$backward <- predict(back_fit, testing)
+
 
 back_post<-postResample(pred = test_results$backward,  obs = test_results$cntry_cul_und)
 
@@ -845,30 +925,45 @@ back_post<-postResample(pred = test_results$backward,  obs = test_results$cntry_
 
 #### Stepwsie regression
 
+In stepwise regression, in each iteration variables are added and omitted. In other words, stepwise regression is a combination of forward and backward selection.
+
 ```{r}
+#| output: false
+
+
+set.seed(456)
 step_fit <- train(cntry_cul_und~., data = training, 
                    method = "leapSeq", 
                    preProc=c('scale', 'center'),
                    tuneGrid = expand.grid(nvmax = 4:10),
-                   trControl = ctrl)
-plot(step_fit)
-
-# which variables are selected?
-coef(step_fit$finalModel, step_fit$bestTune$nvmax)
+             
+                        trControl = ctrl)
 
 
 ```
 
 ```{r}
+
+plot(step_fit)
+
+set.seed(456)
 test_results$stepwise <- predict(step_fit, testing)
+
 
 step_post <- postResample(pred = test_results$stepwise,  obs = test_results$cntry_cul_und)
 ```
 
 #### Elastic Net Regression
 
+Elastic Net Regression is a regularization method entailing that the regression includes penalties to coefficient estimates in order to reduce or remove variables.
+
 ```{r}
+#| output: false
+
+
+set.seed(456)
 elastic_grid = expand.grid(alpha = seq(0, .2, 0.01), lambda = seq(0, .1, 0.01))
+
 
 glmnet_fit <- train(cntry_cul_und~., data = training,
                      method='glmnet',
@@ -876,12 +971,16 @@ glmnet_fit <- train(cntry_cul_und~., data = training,
                      tuneGrid = elastic_grid,
                      trControl=ctrl)
 
-plot(glmnet_fit)
-glmnet_fit$bestTune
+
+
 ```
 
 ```{r}
+
+plot(glmnet_fit)
+
 test_results$elastic_net <- predict(glmnet_fit, testing)
+
 
 glmnet_post <-postResample(pred = test_results$elastic_net,  obs = test_results$cntry_cul_und)
 
@@ -890,7 +989,13 @@ glmnet_post <-postResample(pred = test_results$elastic_net,  obs = test_results$
 
 #### k Nearest Neighbour
 
+k-Nearest Neighbour, is a data mining model based on computing the distances between observations and then classifying them based on spacial proximity. The benefit of this algorithm is that it performs well in case on non-linear relationships.
+
 ```{r}
+#| output: false
+
+
+set.seed(456)
 knn_fit <- train(cntry_cul_und~., 
                   data = training,
                   method = "kknn",   
@@ -899,19 +1004,29 @@ knn_fit <- train(cntry_cul_und~.,
                                         distance=2,
                                         kernel='optimal'),
                   trControl = ctrl)
-plot(knn_fit)
+
+
 ```
 
 ```{r}
+plot(knn_fit)
+
 test_results$knn <- predict(knn_fit, testing)
+
 
 knn_post <-postResample(pred = test_results$knn,  obs = test_results$cntry_cul_und)
 
 ```
 
-#### Random forest
+#### Random Forest
+
+Random Forest, combines multiple decision trees trough *bagging* and combines the obtained prediction from each tree. The algorithm is beneficial as it is less prone to overfitting, performs well in cases of non-linearity and can easily handle categorical features.
 
 ```{r}
+#| output: false
+
+
+set.seed(456)
 rf_fit <- train(cntry_cul_und~., 
                  data = training,
                  method = "rf",
@@ -921,17 +1036,26 @@ rf_fit <- train(cntry_cul_und~.,
                  tuneGrid = data.frame(mtry=c(1,3,5)), #sqrt(26) = 5
                  importance = TRUE)
 
-plot(rf_fit)
+
+
 
 ```
 
 ```{r}
+
+plot(rf_fit)
+
 test_results$random_forest <- predict(rf_fit, testing)
+
 
 rf_post <-postResample(pred = test_results$random_forest,  obs = test_results$cntry_cul_und)
 ```
 
 #### Neural Network
+
+Neural Network, is a machine learning algorithm based on functioning of neurons in the human brain. A neural network is a network of nodes which are oganized in layes, with each node containing a different regression equation based on the independent variables and the output of the previous layers. In each layer the data is processes using weights and activation functions associated with each node.
+
+Unfortunately, the model is computationally too expensive for my computer and therefore has to be excluded from the analysis.
 
 ```{r}
 #nn_fit <- train(cntry_cul_und~., 
@@ -956,15 +1080,9 @@ rf_post <-postResample(pred = test_results$random_forest,  obs = test_results$cn
 
 ```{r}
 
-#Include nn
+#Bind all post resample
+
 rbind(lm_post, lm_poisson_post, lm_quasi_poisson_post, for_post, back_post, step_post, glmnet_post, knn_post, rf_post)
-
-results <- resamples(list(linear = lm_fit, poisson = lm_poisson_fit, quasipoisson = lm_quasi_poisson_fit, foreward = for_fit, backward = back_fit, elastic_net = glmnet_fit, kNN = knn_fit, randomforest = rf_fit )) #neuralnetwork = nn_fit
-
-summary(results)
-
-dotplot(results)
-
 
 
 ```
@@ -972,7 +1090,7 @@ dotplot(results)
 ### Prediction with the best model: Linear Model
 
 ```{r}
-qplot(test_results$lm, test_results$cntry_cul_und) + 
+qplot(test_results$backward, test_results$cntry_cul_und) + 
   labs(title="Linear Regression Observed VS Predicted", x="Predicted", y="Observed") +
   lims(x = c(0, 15), y = c(0, 15)) +
   geom_abline(intercept = 0, slope = 1, colour = "blue") +
@@ -981,32 +1099,105 @@ qplot(test_results$lm, test_results$cntry_cul_und) +
 
 ### Interpretation of the best model: Linear Model
 
+The model with 7 variables provides the highest $R^2$ and is therefore selected as the model for interpretation. However, one should note that the $R^2$ is rather low. The model provides only 47% of explained variance.
+
+The score for *cntry_cul_und:* Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched) holding all other variables in the model constant increases by
+
+-   0.17 units for each step increase in *euftf:* European unification go further or gone too far (0 = Unification already gone too far, 10 = Unification go further)
+
+-   0.82 units for each step in *imbgeco:* Immigration bad or good for country's economy (0 = Bad for the economy, 10 = Good for the economy)
+
+-   0.80 units for each step in *imwbcnt*: Immigrants make country worse or better place to live ( 0 = Worse place, 10 = Better place)
+
+-   0.16 units for each step in *imbleco*: Taxes and services: immigrants take out more than they put in or less (0= Generally take out more, 10 = Generally put in more)
+
+-   0.17 units for each year increase in *yrbrn*: Year of birth
+
+-   0.18 units for *eisced7*: higher tertiary education compared to the reference
+
+The score for *cntry_cul_und:* Country's cultural life undermined or enriched by immigrants (0 = Cultural life undermined, 10 = Cultural life enriched) holding all other variables in the model constant decerases by 0.08 units when *imocntr*: Allow many/few immigrants from poorer countries outside Europe is 'Allow few' compared to the reference 'Allow many'.
+
 ```{r}
-summary(lm_fit)
+
+coef(back_fit$finalModel, back_fit$bestTune$nvmax)
+
+back_fit$results
+
 
 ```
 
 ### Ensemble
 
-Mae so close to one another, does not amke sense
+The three models with the highest $R^2$: Backward Regression, Forward Regression and Elastic Net Regression are selected for the ensemble. The ensemble does not seem to be better compared to the backward model as it only explains 42% of the variance
 
 ```{r}
-#summarize the MAE for all the tools
+#summarize the MAE, RMSE and Rsquared for all tools
+
 apply(test_results[-1], 2, function(x) mean(abs(x - test_results$cntry_cul_und)))
 
+#Create the ensemble
+test_results$comb = (test_results$backward + test_results$foreward + test_results$elastic_net)/3
 
-test_results$comb = (test_results$lm + test_results$lm_poisson + test_results$quasi_poisson + test_results$elastic_net)/4
-
+set.seed(456)
 postResample(pred = test_results$comb,  obs = test_results$cntry_cul_und)
 ```
 
 ### Final predictions
 
 ```{r}
-pred = test_results$comb
+yhat = test_results$comb
 
-head(pred)
+head(yhat)
 
-hist(pred, col="lightblue")
+hist(yhat, col="lightblue")
+
+qplot(test_results$comb, test_results$cntry_cul_und) + 
+  labs(title="Linear Regression Observed VS Predicted", x="Predicted", y="Observed") +
+  lims(x = c(0, 15), y = c(0, 15)) +
+  geom_abline(intercept = 0, slope = 1, colour = "blue") +
+  theme_bw()
 
 ```
+
+### Prediction Intervals: conformal prediction
+
+The plot shows a rather wide confidence interval for the prediction. That is, with 90% confidence we can predict that the real value will be in the range specified. However, as the range is rather wide, one can say that the predictions are rather inaccurate. Also, many observattions even fall outside of this confidence interval.
+
+```{r}
+y = test_results$cntry_cul_und
+error = y-yhat
+hist(error, col="lightblue")
+```
+
+```{r}
+noise = error[1:100]
+
+#Prediction intervals with 95% confidence
+lwr = yhat[101:length(yhat)] + quantile(noise,0.05, na.rm=T)
+upr = yhat[101:length(yhat)] + quantile(noise,0.95, na.rm=T)
+```
+
+```{r}
+
+predictions = data.frame(real=y[101:length(y)], fit=yhat[101:length(yhat)], lwr=lwr, upr=upr)
+
+predictions = predictions %>% mutate(out=factor(if_else(real<lwr | real>upr,1,0)))
+
+# how many real observations are out of the intervals?
+mean(predictions$out==1)
+```
+
+```{r}
+ggplot(predictions, aes(x=fit, y=real))+
+  geom_point(aes(color=out)) + theme(legend.position="none") +
+  xlim(0, 10) + ylim(0, 10)+
+  geom_ribbon(data=predictions,aes(ymin=lwr,ymax=upr),alpha=0.3) +
+  labs(title = "Prediction intervals", x = "prediction",y="real")
+
+```
+
+## Conclusion
+
+The Random Forest model predicted well how people vote for *imdfetn:* Allow many/few immigrants of different race/ethnic group from majority. The 5 most important variables for the Random Forest model are *impcntr* (Allow many/few immigrants from poorer countries outside Europe), *imueclt* (Country's cultural life undermined or enriched by immigrants), *imbgeco* (Immigration bad or good for country's economy), *yrbrn* (Year of birth) and *imtcjob* (Immigrants take jobs away in country or create new jobs).
+
+Unfortunately, the model for predicting what peoples believes are regarding whether their country's cultural life is undermined or enriched by immigrants does not perform as well as the model for the *imdfetn.* However, when inspecting the coefficients, the model shows that variables related to migrants and the economy seem to be rather strongly associated to people believing country's cultural life is undermined or enriched by immigrants.
